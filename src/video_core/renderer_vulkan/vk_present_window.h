@@ -3,10 +3,12 @@
 // Refer to the misc/licenses/gplv2.txt file included.
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <queue>
 #include "common/polyfill_thread.h"
+#include "core/frame_timing.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 
 VK_DEFINE_HANDLE(VmaAllocation)
@@ -32,6 +34,7 @@ struct Frame {
     vk::Semaphore render_ready;
     vk::Fence present_done;
     vk::CommandBuffer cmdbuf;
+    std::chrono::steady_clock::time_point queued;
 };
 
 class PresentWindow final {
@@ -72,6 +75,9 @@ private:
 
     void CopyToSwapchain(Frame* frame);
 
+    /// CopyToSwapchain, logging how long frames wait for it and how long it blocks.
+    void TimedCopyToSwapchain(Frame* frame);
+
     vk::RenderPass CreateRenderpass();
 
 private:
@@ -96,6 +102,8 @@ private:
     std::mutex queue_mutex;
     std::mutex free_mutex;
     std::jthread present_thread;
+    Core::TimingSamples present_wait;
+    Core::TimingSamples present_call;
     bool vsync_enabled{};
     bool blit_supported;
     bool use_present_thread{true};

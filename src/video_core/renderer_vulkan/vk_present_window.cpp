@@ -283,9 +283,10 @@ Frame* PresentWindow::GetRenderFrame() {
 }
 
 void PresentWindow::Present(Frame* frame) {
+    frame->queued = std::chrono::steady_clock::now();
     if (!use_present_thread) {
         scheduler.WaitWorker();
-        CopyToSwapchain(frame);
+        TimedCopyToSwapchain(frame);
         free_queue.push(frame);
         return;
     }
@@ -335,7 +336,7 @@ void PresentWindow::PresentThread(std::stop_token token) {
         // lock in WaitPresent is guaranteed to occur after here.
         std::exchange(lock, std::unique_lock{swapchain_mutex});
 
-        CopyToSwapchain(frame);
+        TimedCopyToSwapchain(frame);
 
         // Free the frame for reuse
         std::scoped_lock fl{free_mutex};
@@ -368,6 +369,30 @@ void PresentWindow::NotifySurfaceChanged() {
     next_surface = CreateSurface(instance.GetInstance(), emu_window);
     recreate_surface_cv.notify_one();
 #endif
+}
+
+void PresentWindow::TimedCopyToSwapchain(Frame* frame) {
+    using namespace std::chrono;
+    const auto start = steady_clock::now();
+    CopyToSwapchain(frame);
+    const auto end = steady_clock::now();
+    // Waiting for the copy is the presentation queue; the copy itself blocks in acquire and
+    // present, which is where FIFO (vsync) holds the frame back.
+    present_wait.Add(duration_cast<microseconds>(start - frame->queued).count());
+    present_call.Add(duration_cast<microseconds>(end - start).count());
+    if (present_call.Count() >= Core::FrameTimingLog::REPORT_FRAMES) {
+        const auto ms = [](s64 us) { return static_cast<double>(us) / 1000.0; };
+        LOG_INFO(Render_Vulkan,
+                 "Present timing ({} frames, {}): wait for presenter p50 {:.1f} p95 {:.1f} max "
+                 "{:.1f} ms, acquire+present p50 {:.1f} p95 {:.1f} max {:.1f} ms ({} images)",
+                 present_call.Count(), vk::to_string(swapchain.GetPresentMode()),
+                 ms(present_wait.Percentile(50)), ms(present_wait.Percentile(95)),
+                 ms(present_wait.Percentile(100)), ms(present_call.Percentile(50)),
+                 ms(present_call.Percentile(95)), ms(present_call.Percentile(100)),
+                 swapchain.GetImageCount());
+        present_wait.Clear();
+        present_call.Clear();
+    }
 }
 
 void PresentWindow::CopyToSwapchain(Frame* frame) {

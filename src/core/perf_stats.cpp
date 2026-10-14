@@ -238,6 +238,7 @@ void FrameLimiter::DoFrameLimiting(microseconds current_system_time_us) {
     }
 
     auto now = Clock::now();
+    const auto submit = std::chrono::steady_clock::now();
     double sleep_scale = Settings::GetFrameLimit() / 100.0;
 
     if (Settings::GetFrameLimit() == 0) {
@@ -255,6 +256,7 @@ void FrameLimiter::DoFrameLimiting(microseconds current_system_time_us) {
     frame_limiting_delta_err -= duration_cast<microseconds>(now - previous_walltime);
     frame_limiting_delta_err =
         std::clamp(frame_limiting_delta_err, -max_lag_time_us, max_lag_time_us);
+    const microseconds sleep_requested = frame_limiting_delta_err;
 
     if (frame_limiting_delta_err > microseconds::zero()) {
         if (wait_callback) {
@@ -266,6 +268,9 @@ void FrameLimiter::DoFrameLimiting(microseconds current_system_time_us) {
         frame_limiting_delta_err -= duration_cast<microseconds>(now_after_sleep - now);
         now = now_after_sleep;
     }
+
+    timing_log.Record(submit, current_system_time_us.count(), sleep_scale, sleep_requested.count(),
+                      std::chrono::steady_clock::now());
 
     previous_system_time_us = current_system_time_us;
     previous_walltime = now;

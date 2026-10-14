@@ -57,6 +57,10 @@ public:
         return image_count;
     }
 
+    vk::PresentModeKHR GetPresentMode() const {
+        return present_mode;
+    }
+
     vk::Extent2D GetExtent() const {
         return extent;
     }

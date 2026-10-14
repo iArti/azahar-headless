@@ -13,6 +13,7 @@
 #include "common/bit_field.h"
 #include "common/common_types.h"
 #include "common/thread.h"
+#include "core/frame_timing.h"
 
 namespace Core {
 
@@ -221,6 +222,9 @@ private:
 
     /// Event to advance the frame when frame advancing is enabled
     Common::Event frame_advance_event;
+
+    /// Frame pacing log (emulation thread only)
+    FrameTimingLog timing_log;
 };
 
 } // namespace Core
