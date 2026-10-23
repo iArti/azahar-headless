@@ -47,9 +47,13 @@ class ControlLink(
     }
 
     fun run() {
+        StreamStatus.active = true
+        StreamStatus.console = console
+        StreamStatus.state = "Connecting to the console"
         try {
             val s = connect() ?: return Log.error("[Stream] console $console:$tcpPort unreachable")
             socket = s
+            StreamStatus.state = "Choosing a game on the console"
             out = s.getOutputStream()
             val input = BufferedInputStream(s.getInputStream())
             val localUdp = NativeLibrary.streamOpen(console, udpPort)
@@ -78,6 +82,7 @@ class ControlLink(
             stopGame()
             NativeLibrary.streamClose()
             runCatching { socket?.close() }
+            StreamStatus.reset()
         }
     }
 
@@ -131,23 +136,39 @@ class ControlLink(
         }
     }
 
-    /** The console's statistics tick: answer with the emulator's own counters and the stream's. */
+    /** The console's statistics tick: answer with the latest sample. */
     private fun answerStats() {
-        if (emulation == null) return
-        val p = NativeLibrary.getPerfStats()
-        if (p.size < 9) return
-        // Rounded as numbers: String.format would use the phone's locale (a decimal comma).
-        fun r(v: Double, digits: Int) = Math.round(v * digits) / digits.toDouble()
-        val perf = JSONObject()
-            .put("system_fps", r(p[0], 10))
-            .put("game_fps", r(p[1], 10))
-            .put("speed", r(p[2], 100))
-            .put("frame_ms", r(p[3] * 1000, 100))
-            .put("gpu_ms", r(p[6] * 1000, 100))
-            .put("swap_ms", r(p[7] * 1000, 100))
-            .put("stream", JSONObject(NativeLibrary.streamStats()))
+        val perf = StreamStatus.perf ?: return
         Log.info("[Stream] perf $perf")
         send(JSONObject().put("event", "perf").put("perf", perf))
+    }
+
+    /**
+     * Once a second while a game runs: the emulator's counters (getPerfStats resets them on every read, so this is
+     * the only reader) and the stream totals, for the stream screen and the console.
+     */
+    private fun sample(lastBytes: Long, lastAt: Long): Pair<Long, Long> {
+        val p = NativeLibrary.getPerfStats()
+        val stream = JSONObject(NativeLibrary.streamStats())
+        val now = System.nanoTime()
+        val bytes = stream.optLong("bytes")
+        if (lastAt > 0 && now > lastAt) {
+            StreamStatus.mbps = (bytes - lastBytes) * 8.0 / ((now - lastAt) / 1e9) / 1e6
+        }
+        if (p.size >= 9) {
+            // Rounded as numbers: String.format would use the phone's locale (a decimal comma).
+            fun r(v: Double, digits: Int) = Math.round(v * digits) / digits.toDouble()
+            StreamStatus.perf = JSONObject()
+                .put("system_fps", r(p[0], 10))
+                .put("game_fps", r(p[1], 10))
+                .put("speed", r(p[2], 100))
+                .put("frame_ms", r(p[3] * 1000, 100))
+                .put("gpu_ms", r(p[6] * 1000, 100))
+                .put("swap_ms", r(p[7] * 1000, 100))
+                .put("mbps", r(StreamStatus.mbps, 100))
+                .put("stream", stream)
+        }
+        return bytes to now
     }
 
     private fun slot(msg: JSONObject, action: (Int) -> String) {
@@ -183,11 +204,21 @@ class ControlLink(
             return send(JSONObject().put("event", "error").put("message", "encoder"))
         }
         TurboHelper.setTurboEnabled(false, false)
-        emulation = Thread({
+        val thread = Thread({
             Log.info("[Stream] starting ${game.title}")
             NativeLibrary.run(game.path)
             Log.info("[Stream] emulation ended")
         }, "NativeEmulation").apply { start() }
+        emulation = thread
+        Thread({
+            var last = 0L to 0L
+            while (thread.isAlive && !closed) {
+                Thread.sleep(1_000)
+                if (thread.isAlive) last = sample(last.first, last.second)
+            }
+        }, "StreamStats").start()
+        StreamStatus.game = game.title
+        StreamStatus.state = "Streaming"
         onGame(game.title)
         val layout = JSONObject()
             .put("display", JSONArray(listOf(WIDTH, HEIGHT)))
@@ -203,6 +234,9 @@ class ControlLink(
         thread.join(10_000)
         NativeLibrary.streamStopVideo()
         emulation = null
+        StreamStatus.game = null
+        StreamStatus.perf = null
+        StreamStatus.state = "Choosing a game on the console"
         onGame(null)
     }
 

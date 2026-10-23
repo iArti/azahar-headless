@@ -92,6 +92,13 @@
             android:theme="@style/Theme.Citra.Main"
             android:label="@string/cheats"/>
 
+        <!-- Statistics while streaming; keeping it open keeps Wi-Fi in low-latency mode. -->
+        <activity
+            android:name="org.citra.citra_emu.stream.StreamActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Citra.Main" />
+
         <!-- Started by the Magic Stream companion (uid shell) with the console's address. -->
         <service
             android:name="org.citra.citra_emu.stream.StreamService"

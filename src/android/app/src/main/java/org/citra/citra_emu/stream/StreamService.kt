@@ -98,11 +98,16 @@ class StreamService : Service() {
             this, 0, Intent(this, StreamService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE
         )
+        val screen = PendingIntent.getActivity(
+            this, 1, Intent(this, StreamActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE
+        )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_notification_logo)
             .setContentTitle(if (game != null) "Streaming to the console" else "Waiting for the console")
             .setContentText(game ?: "Magic Stream")
             .setOngoing(true)
+            .setContentIntent(screen)
             .addAction(0, "Stop", stop)
             .build()
         ServiceCompat.startForeground(
@@ -118,6 +123,6 @@ class StreamService : Service() {
     companion object {
         private const val CHANNEL = "magic_stream"
         private const val NOTIFICATION_ID = 0x4d53
-        private const val ACTION_STOP = "org.citra.citra_emu.stream.STOP"
+        const val ACTION_STOP = "org.citra.citra_emu.stream.STOP"
     }
 }

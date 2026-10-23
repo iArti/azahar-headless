@@ -211,6 +211,10 @@ class MainActivity :
     }
 
     override fun onResume() {
+        // While a game streams to the console, the app opens on the stream screen.
+        if (org.citra.citra_emu.stream.StreamStatus.active) {
+            startActivity(Intent(this, org.citra.citra_emu.stream.StreamActivity::class.java))
+        }
         checkUserPermissions()
 
         ThemeUtil.setCorrectTheme(this)
