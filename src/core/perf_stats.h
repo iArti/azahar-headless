@@ -204,8 +204,21 @@ public:
      */
     void SetWaitCallback(WaitCallback callback);
 
+    using PacingHook = std::function<std::chrono::microseconds(std::chrono::microseconds)>;
+
+    /**
+     * Sets a function called once per frame with the frame's emulated duration (at the current
+     * speed limit) whose result shifts the frame limiter's schedule: positive delays the next
+     * frame, negative brings it forward. Used to pace frames to an external display clock (Magic
+     * Stream). nullptr removes it.
+     */
+    void SetPacingHook(PacingHook hook);
+
 private:
     void WaitForFrameAdvance();
+
+    std::mutex pacing_mutex;
+    PacingHook pacing_hook;
 
     WaitCallback wait_callback;
 

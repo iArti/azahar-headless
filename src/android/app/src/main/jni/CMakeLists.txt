@@ -28,6 +28,8 @@ add_library(citra-android SHARED
     native.cpp
     ndk_motion.cpp
     ndk_motion.h
+    stream/stream_clock.cpp
+    stream/stream_clock.h
     stream/stream_encoder.cpp
     stream/stream_encoder.h
     stream/stream_session.cpp

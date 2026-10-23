@@ -14,6 +14,7 @@
 #include <vector>
 #include <netinet/in.h>
 #include "common/polyfill_thread.h"
+#include "jni/stream/stream_clock.h"
 
 struct ANativeWindow;
 
@@ -74,6 +75,16 @@ public:
 
     std::string Stats();
 
+    /// Frame rhythm along the phone's pipeline (CLOCK_MONOTONIC us): the end of each emulated
+    /// frame, the buffer timestamp the renderer gave it and the moment it left the encoder.
+    void MarkFrameEnd();
+    void MarkEncoded(int64_t buffer_us);
+
+    /// Pacing to the console's panels, fed by its 'C' packets.
+    Stream::Clock& PacingClock() {
+        return clock;
+    }
+
 private:
     void ReceiveLoop(std::stop_token token);
     void SendFragments(uint32_t seq, const std::vector<uint8_t>& unit, bool critical, int only);
@@ -100,9 +111,18 @@ private:
     std::mutex encoder_mutex;
     std::unique_ptr<Encoder> encoder;
 
+    Stream::Clock clock;
+    struct Series {
+        int64_t last = 0;
+        std::vector<int32_t> values;
+        void Interval(int64_t t);
+    };
+    std::mutex rhythm_mutex;
+    Series frame_end, buffer_ts, encoded;
+    std::vector<int32_t> encode_us;
     uint32_t last_input_seq = 0;
     bool have_input = false;
-    std::atomic<uint64_t> units_sent{0}, bytes_sent{0}, nacks{0}, key_requests{0}, inputs{0};
+    std::atomic<uint64_t> units_sent{0}, bytes_sent{0}, nacks{0}, key_requests{0}, inputs{0}, clocks{0};
 };
 
 } // namespace Stream

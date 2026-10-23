@@ -36,6 +36,7 @@ private:
     AMediaCodec* codec = nullptr;
     ANativeWindow* window = nullptr;
     int width = 0, height = 0;
+    uint64_t frame_index = 0;
     std::jthread output;
 };
 

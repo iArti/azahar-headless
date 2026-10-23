@@ -223,6 +223,11 @@ void FrameLimiter::SetWaitCallback(WaitCallback callback) {
     wait_callback = std::move(callback);
 }
 
+void FrameLimiter::SetPacingHook(PacingHook hook) {
+    std::scoped_lock lock(pacing_mutex);
+    pacing_hook = std::move(hook);
+}
+
 void FrameLimiter::WaitOnce() {
     if (frame_advancing_enabled) {
         // Frame advancing is enabled: wait on event instead of doing framelimiting
@@ -250,10 +255,17 @@ void FrameLimiter::DoFrameLimiting(microseconds current_system_time_us) {
     // percent. High values means it'll take longer after a slow frame to recover and start limiting
     const microseconds max_lag_time_us = duration_cast<microseconds>(
         std::chrono::duration<double, std::chrono::microseconds::period>(25ms / sleep_scale));
-    frame_limiting_delta_err += duration_cast<microseconds>(
+    const auto emulated_frame = duration_cast<microseconds>(
         std::chrono::duration<double, std::chrono::microseconds::period>(
             (current_system_time_us - previous_system_time_us) / sleep_scale));
+    frame_limiting_delta_err += emulated_frame;
     frame_limiting_delta_err -= duration_cast<microseconds>(now - previous_walltime);
+    {
+        std::scoped_lock lock(pacing_mutex);
+        if (pacing_hook) {
+            frame_limiting_delta_err += pacing_hook(emulated_frame);
+        }
+    }
     frame_limiting_delta_err =
         std::clamp(frame_limiting_delta_err, -max_lag_time_us, max_lag_time_us);
     const microseconds sleep_requested = frame_limiting_delta_err;

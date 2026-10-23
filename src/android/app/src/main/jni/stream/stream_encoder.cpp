@@ -123,13 +123,15 @@ void Encoder::OutputLoop(std::stop_token token) {
             const bool config = (info.flags & kFlagCodecConfig) != 0;
             const bool key = (info.flags & kFlagKeyFrame) != 0;
             std::vector<uint8_t> unit(12 + static_cast<size_t>(info.size));
-            const uint64_t head = config ? kPacketConfig
-                                         : (static_cast<uint64_t>(info.presentationTimeUs) &
-                                            ((1ULL << 61) - 1)) |
-                                               (key ? kPacketKey : 0);
+            // Frames are numbered in the pts field: the console shows frame n on its own
+            // schedule (n refreshes after the first), so the encoder's timestamps are not used.
+            const uint64_t head = config ? kPacketConfig : (frame_index++ | (key ? kPacketKey : 0));
             Put64(unit.data(), head);
             Put32(unit.data() + 8, static_cast<uint32_t>(info.size));
             std::copy_n(data + info.offset, info.size, unit.data() + 12);
+            if (!config) {
+                session.MarkEncoded(info.presentationTimeUs);
+            }
             session.SendUnit(std::move(unit), config);
         }
         AMediaCodec_releaseOutputBuffer(codec, static_cast<size_t>(index), false);

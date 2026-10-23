@@ -652,6 +652,12 @@ jboolean Java_org_citra_citra_1emu_NativeLibrary_streamStartVideo([[maybe_unused
     if (!encoder_window) {
         return JNI_FALSE;
     }
+    // Frames are paced to the console's panels through the frame limiter (see Stream::Clock).
+    Core::System::GetInstance().frame_limiter.SetPacingHook(
+        [session = stream_session.get()](std::chrono::microseconds emulated_frame) {
+            session->MarkFrameEnd();
+            return session->PacingClock().TakeShift(emulated_frame);
+        });
     // The encoder's input surface takes the place of the SurfaceView: RunCitra() renders into it.
     std::scoped_lock lock(surface_mutex);
     if (s_surface) {
@@ -665,6 +671,7 @@ jboolean Java_org_citra_citra_1emu_NativeLibrary_streamStartVideo([[maybe_unused
 
 void Java_org_citra_citra_1emu_NativeLibrary_streamStopVideo([[maybe_unused]] JNIEnv* env,
                                                              [[maybe_unused]] jobject obj) {
+    Core::System::GetInstance().frame_limiter.SetPacingHook(nullptr);
     {
         std::scoped_lock lock(surface_mutex);
         if (s_surface) {

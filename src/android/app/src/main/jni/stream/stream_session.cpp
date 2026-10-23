@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <fmt/format.h>
 #include <poll.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include "common/logging/log.h"
@@ -200,6 +201,17 @@ void Session::ReceiveLoop(std::stop_token token) {
             }
             break;
         }
+        case 'C': {
+            // 'M' 'C' 1 0 | u64 flip time (console us) | u32 flip sequence | s32 slack of the shown
+            // frame: that refresh minus the frame's due time on the console's schedule (us)
+            if (n < 20) {
+                break;
+            }
+            const uint64_t flip_us = static_cast<uint64_t>(Get32(buf + 4)) << 32 | Get32(buf + 8);
+            clock.OnFlip(flip_us, Get32(buf + 12), static_cast<int32_t>(Get32(buf + 16)));
+            clocks++;
+            break;
+        }
         case 'I': {
             uint32_t seq;
             InputState state;
@@ -222,10 +234,60 @@ void Session::ReceiveLoop(std::stop_token token) {
     }
 }
 
+namespace {
+int64_t NowUs() {
+    timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return static_cast<int64_t>(t.tv_sec) * 1000000 + t.tv_nsec / 1000;
+}
+// "p5/p50/p95" of the values (us, printed in ms), and clears them.
+std::string Percentiles(std::vector<int32_t>& v) {
+    if (v.empty()) {
+        return "\"-\"";
+    }
+    std::sort(v.begin(), v.end());
+    const auto at = [&v](size_t pct) { return v[std::min(v.size() - 1, v.size() * pct / 100)] / 1000.0; };
+    std::string s = fmt::format("\"{:.1f}/{:.1f}/{:.1f}\"", at(5), at(50), at(95));
+    v.clear();
+    return s;
+}
+} // namespace
+
+void Session::Series::Interval(int64_t t) {
+    if (last != 0 && t > last && t - last < 1000000) {
+        values.push_back(static_cast<int32_t>(t - last));
+    }
+    last = t;
+}
+
+void Session::MarkFrameEnd() {
+    std::scoped_lock lock(rhythm_mutex);
+    frame_end.Interval(NowUs());
+}
+
+void Session::MarkEncoded(int64_t buffer_us) {
+    const int64_t now = NowUs();
+    std::scoped_lock lock(rhythm_mutex);
+    buffer_ts.Interval(buffer_us);
+    encoded.Interval(now);
+    if (now >= buffer_us && now - buffer_us < 1000000) {
+        encode_us.push_back(static_cast<int32_t>(now - buffer_us));
+    }
+}
+
 std::string Session::Stats() {
-    return fmt::format(
-        "{{\"units\":{},\"bytes\":{},\"nacks\":{},\"key_requests\":{},\"inputs\":{}}}",
-        units_sent.load(), bytes_sent.load(), nacks.load(), key_requests.load(), inputs.load());
+    std::string rhythm;
+    {
+        // Intervals between consecutive frames at each point: where they spread is where frames bunch.
+        std::scoped_lock lock(rhythm_mutex);
+        rhythm = fmt::format("{{\"frame_end_ms\":{},\"buffer_ms\":{},\"encoded_ms\":{},\"encode_ms\":{}}}",
+                             Percentiles(frame_end.values), Percentiles(buffer_ts.values),
+                             Percentiles(encoded.values), Percentiles(encode_us));
+    }
+    return fmt::format("{{\"units\":{},\"bytes\":{},\"nacks\":{},\"key_requests\":{},\"inputs\":{},"
+                       "\"clocks\":{},\"pacing\":{},\"rhythm\":{}}}",
+                       units_sent.load(), bytes_sent.load(), nacks.load(), key_requests.load(),
+                       inputs.load(), clocks.load(), clock.Stats(), rhythm);
 }
 
 } // namespace Stream
