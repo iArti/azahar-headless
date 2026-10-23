@@ -3,7 +3,9 @@
 // Refer to the LICENSE.txt file included.
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <codecvt>
 #include <thread>
 #include <dlfcn.h>
@@ -52,6 +54,7 @@
 #include "jni/camera/ndk_camera.h"
 #include "jni/camera/still_image_camera.h"
 #include "jni/config.h"
+#include "jni/stream/stream_session.h"
 #include "network/announce_multiplayer_session.h"
 
 #ifdef ENABLE_OPENGL
@@ -121,6 +124,9 @@ std::recursive_mutex surface_mutex;
 std::condition_variable_any surface_cv;
 
 std::string inserted_cartridge;
+
+// Magic Stream: the console session (UDP video out, input in) while StreamService runs.
+std::unique_ptr<Stream::Session> stream_session;
 
 // Android Multiplayer which can be initialized with parameters
 std::unique_ptr<AndroidMultiplayer> multiplayer{nullptr};
@@ -198,9 +204,101 @@ static bool CheckMicPermission() {
 }
 
 static void WaitForEmulationSurfaces(std::unique_lock<std::recursive_mutex>& surface_lock) {
-    surface_cv.wait_for(surface_lock, std::chrono::seconds(2),
-                        [] { return s_secondary_surface != nullptr; });
+    // A stream has no second screen: the console gets both 3DS screens in one frame.
+    if (!Settings::values.stream_mode) {
+        surface_cv.wait_for(surface_lock, std::chrono::seconds(2),
+                            [] { return s_secondary_surface != nullptr; });
+    }
     surface_cv.wait(surface_lock, [] { return s_surface != nullptr; });
+}
+
+// The stream frame is 800x960: the 3DS top screen 1:1 at 2x resolution in (0,0) and the bottom
+// one in (80,480), the layout the console expects. Applied over the ini without saving it.
+static void ApplyStreamOverrides() {
+    if (!Settings::values.stream_mode) {
+        return;
+    }
+    auto& v = Settings::values;
+    v.portrait_layout_option.SetValue(Settings::PortraitLayoutOption::PortraitCustomLayout);
+    v.custom_portrait_top_x.SetValue(0);
+    v.custom_portrait_top_y.SetValue(0);
+    v.custom_portrait_top_width.SetValue(800);
+    v.custom_portrait_top_height.SetValue(480);
+    v.custom_portrait_bottom_x.SetValue(80);
+    v.custom_portrait_bottom_y.SetValue(480);
+    v.custom_portrait_bottom_width.SetValue(640);
+    v.custom_portrait_bottom_height.SetValue(480);
+    v.resolution_factor.SetValue(2);
+    v.async_presentation.SetValue(false);
+}
+
+// Applies the console's controller state ('I' packets): buttons and sticks go through the same
+// handlers as a gamepad, the touch point is given in 3DS bottom screen pixels (320x240).
+static void ApplyStreamInput(const Stream::InputState& s) {
+    using namespace Stream;
+    static constexpr std::array<std::pair<uint32_t, int>, 15> buttons{{
+        {kSouth, 700},  // A: the console sends its A label as the south button
+        {kEast, 701},   // B
+        {kWest, 702},   // X
+        {kNorth, 703},  // Y
+        {kStart, 704},  // START
+        {kSelect, 705}, // SELECT
+        {kHome, 706},   // HOME
+        {kZL, 707},     // ZL
+        {kZR, 708},     // ZR
+        {kUp, 709},     // DPAD_UP
+        {kDown, 710},   // DPAD_DOWN
+        {kLeft, 711},   // DPAD_LEFT
+        {kRight, 712},  // DPAD_RIGHT
+        {kL1, 773},     // TRIGGER_L
+        {kR1, 774},     // TRIGGER_R
+    }};
+    static InputState prev;
+    // The console starts sending as soon as the game is chosen, before RunCitra() sets up input.
+    if (stop_run || !InputManager::ButtonHandler() || !InputManager::AnalogHandler()) {
+        prev = {};
+        return;
+    }
+    for (const auto& [bit, key] : buttons) {
+        const bool now = (s.buttons & bit) != 0, before = (prev.buttons & bit) != 0;
+        if (now && !before) {
+            InputManager::ButtonHandler()->PressKey(key);
+        } else if (!now && before) {
+            InputManager::ButtonHandler()->ReleaseKey(key);
+        }
+    }
+    const auto stick = [](int axis, int16_t x, int16_t y) {
+        // Linux axes grow downwards; Citra's grow upwards (as the JNI gamepad path does).
+        float fx = std::clamp(x / 32767.f, -1.f, 1.f), fy = std::clamp(-y / 32767.f, -1.f, 1.f);
+        const float r = std::sqrt(fx * fx + fy * fy);
+        if (r > 1.f) {
+            fx /= r;
+            fy /= r;
+        }
+        InputManager::AnalogHandler()->MoveJoystick(axis, fx, fy);
+    };
+    if (s.lx != prev.lx || s.ly != prev.ly) {
+        stick(713, s.lx, s.ly); // STICK_LEFT
+    }
+    if (s.rx != prev.rx || s.ry != prev.ry) {
+        stick(718, s.rx, s.ry); // STICK_C
+    }
+    if (s.touch || prev.touch) {
+        std::scoped_lock lock(surface_mutex);
+        if (window) {
+            const auto& bottom = window->GetFramebufferLayout().bottom_screen;
+            const int x = static_cast<int>(bottom.left + s.touch_x * bottom.GetWidth() / 320);
+            const int y = static_cast<int>(bottom.top + s.touch_y * bottom.GetHeight() / 240);
+            if (s.touch && !prev.touch) {
+                window->OnTouchEvent(x, y, true);
+            } else if (s.touch) {
+                window->OnTouchMoved(x, y);
+            } else {
+                window->OnTouchEvent(0, 0, false);
+            }
+        }
+    }
+    prev = s;
 }
 
 static Core::System::ResultStatus RunCitra(const std::string& filepath) {
@@ -229,6 +327,7 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
     std::unique_lock<std::recursive_mutex> surface_lock(surface_mutex);
 
     WaitForEmulationSurfaces(surface_lock);
+    ApplyStreamOverrides();
 
     // We also need to lock the surface mutex when System::Init() is called.
     // This is because save state saving and loading may call System::Init
@@ -294,8 +393,13 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
         break;
     }
 
+    if (Settings::values.stream_mode) {
+        secondary_window.reset(); // nothing to show on the phone while streaming
+    }
+
     // Forces a config reload on game boot, if the user changed settings in the UI
     Config{};
+    ApplyStreamOverrides();
     // Replace with game-specific settings
     u64 program_id{};
     FileUtil::SetCurrentRomPath(filepath);
@@ -522,6 +626,66 @@ void Java_org_citra_citra_1emu_NativeLibrary_surfaceDestroyed([[maybe_unused]] J
             window->OnSurfaceChanged(s_surface);
         }
     }
+}
+
+// --- Magic Stream (StreamService) ---
+
+jint Java_org_citra_citra_1emu_NativeLibrary_streamOpen(JNIEnv* env, [[maybe_unused]] jobject obj,
+                                                        jstring console_ip, jint console_port) {
+    stream_session = std::make_unique<Stream::Session>(&ApplyStreamInput);
+    const int port = stream_session->Open(GetJString(env, console_ip), console_port);
+    if (port < 0) {
+        stream_session.reset();
+    }
+    return port;
+}
+
+jboolean Java_org_citra_citra_1emu_NativeLibrary_streamStartVideo([[maybe_unused]] JNIEnv* env,
+                                                                  [[maybe_unused]] jobject obj,
+                                                                  jint width, jint height,
+                                                                  jint bitrate) {
+    if (!stream_session) {
+        return JNI_FALSE;
+    }
+    Settings::values.stream_mode = true;
+    ANativeWindow* encoder_window = stream_session->StartVideo(width, height, bitrate);
+    if (!encoder_window) {
+        return JNI_FALSE;
+    }
+    // The encoder's input surface takes the place of the SurfaceView: RunCitra() renders into it.
+    std::scoped_lock lock(surface_mutex);
+    if (s_surface) {
+        ANativeWindow_release(s_surface);
+    }
+    ANativeWindow_acquire(encoder_window);
+    s_surface = encoder_window;
+    surface_cv.notify_all();
+    return JNI_TRUE;
+}
+
+void Java_org_citra_citra_1emu_NativeLibrary_streamStopVideo([[maybe_unused]] JNIEnv* env,
+                                                             [[maybe_unused]] jobject obj) {
+    {
+        std::scoped_lock lock(surface_mutex);
+        if (s_surface) {
+            ANativeWindow_release(s_surface);
+            s_surface = nullptr;
+        }
+    }
+    if (stream_session) {
+        stream_session->StopVideo();
+    }
+}
+
+void Java_org_citra_citra_1emu_NativeLibrary_streamClose([[maybe_unused]] JNIEnv* env,
+                                                         [[maybe_unused]] jobject obj) {
+    stream_session.reset();
+    Settings::values.stream_mode = false;
+}
+
+jstring Java_org_citra_citra_1emu_NativeLibrary_streamStats(JNIEnv* env,
+                                                            [[maybe_unused]] jobject obj) {
+    return ToJString(env, stream_session ? stream_session->Stats() : std::string{"{}"});
 }
 
 void Java_org_citra_citra_1emu_NativeLibrary_doFrame([[maybe_unused]] JNIEnv* env,

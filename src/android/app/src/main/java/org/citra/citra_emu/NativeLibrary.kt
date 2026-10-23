@@ -179,6 +179,16 @@ object NativeLibrary {
     external fun surfaceDestroyed()
     external fun doFrame()
 
+    // Magic Stream: video to a console over UDP, its input back (see stream/StreamService)
+    /** Opens the UDP session with the console; returns the local UDP port or -1. */
+    external fun streamOpen(consoleIp: String, consolePort: Int): Int
+    /** Starts the encoder and makes its input surface the render target of the next run(). */
+    external fun streamStartVideo(width: Int, height: Int, bitrate: Int): Boolean
+    /** Call after the emulation thread has returned. */
+    external fun streamStopVideo()
+    external fun streamClose()
+    external fun streamStats(): String
+
     // Second window
     external fun secondarySurfaceChanged(secondary_surface: Surface)
     external fun secondarySurfaceDestroyed()

@@ -64,6 +64,8 @@ android {
         // The application ID refers to Lime3DS to allow for
         // the Play Store listing, which was originally set up for Lime3DS, to still be used.
         applicationId = "org.azahar_emu.azahar"
+        // Azahar Stream installs next to the regular Azahar (org.azahar_emu.azahar.stream).
+        applicationIdSuffix = ".stream"
         minSdk = 29
         targetSdk = 37
         versionCode = autoVersion

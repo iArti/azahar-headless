@@ -47,7 +47,9 @@ void EmuWindow_Android::OnTouchMoved(int x, int y) {
 }
 
 void EmuWindow_Android::OnFramebufferSizeChanged() {
-    const bool is_portrait_mode = (AndroidUtils::IsPortraitMode() && !is_secondary);
+    // The stream frame is portrait whatever the phone's own orientation is.
+    const bool is_portrait_mode =
+        (Settings::values.stream_mode || AndroidUtils::IsPortraitMode()) && !is_secondary;
     UpdateCurrentFramebufferLayout(window_width, window_height, is_portrait_mode);
 }
 

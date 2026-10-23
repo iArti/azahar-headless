@@ -28,6 +28,10 @@ add_library(citra-android SHARED
     native.cpp
     ndk_motion.cpp
     ndk_motion.h
+    stream/stream_encoder.cpp
+    stream/stream_encoder.h
+    stream/stream_session.cpp
+    stream/stream_session.h
     system_save_game.cpp
     native_log.cpp
 )

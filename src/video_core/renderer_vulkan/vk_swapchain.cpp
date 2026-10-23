@@ -190,6 +190,10 @@ void Swapchain::SetPresentMode() {
     };
 
     present_mode = vk::PresentModeKHR::eFifo;
+    // An encoder input surface has no vsync: FIFO hands over every frame as soon as it is drawn.
+    if (Settings::values.stream_mode) {
+        return;
+    }
     const bool has_immediate = find_mode(vk::PresentModeKHR::eImmediate);
     const bool has_mailbox = find_mode(vk::PresentModeKHR::eMailbox);
     if (!has_immediate && !has_mailbox) {
@@ -240,7 +244,8 @@ void Swapchain::SetSurfaceProperties() {
     }
 
     // Select number of images in swap chain, we prefer one buffer in the background to work on
-    image_count = capabilities.minImageCount + 1;
+    // Streaming: no spare image, a frame never waits in the swapchain behind another one.
+    image_count = capabilities.minImageCount + (Settings::values.stream_mode ? 0 : 1);
     if (capabilities.maxImageCount > 0) {
         image_count = std::min(image_count, capabilities.maxImageCount);
     }
