@@ -539,6 +539,9 @@ struct Values {
     SwitchableSetting<bool> async_presentation{true, Keys::async_presentation};
     /// Rendering into a video encoder for Magic Stream (Android); set at run time, never saved.
     bool stream_mode = false;
+    /// Wait for the frame's due time before presenting it rather than after (see
+    /// RendererBase::PaceFrame); set at run time, never saved.
+    bool present_on_deadline = false;
     SwitchableSetting<bool> use_hw_shader{true, Keys::use_hw_shader};
     SwitchableSetting<bool> use_disk_shader_cache{true, Keys::use_disk_shader_cache};
     SwitchableSetting<bool> use_skip_duplicate_frames{false, Keys::use_skip_duplicate_frames};

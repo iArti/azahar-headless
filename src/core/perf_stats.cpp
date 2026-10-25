@@ -288,6 +288,11 @@ void FrameLimiter::DoFrameLimiting(microseconds current_system_time_us) {
     previous_walltime = now;
 }
 
+void FrameLimiter::MarkPresent(microseconds current_system_time_us) {
+    timing_log.RecordPresent(std::chrono::steady_clock::now(), current_system_time_us.count(),
+                             Settings::GetFrameLimit() / 100.0);
+}
+
 bool FrameLimiter::IsFrameAdvancing() const {
     return frame_advancing_enabled;
 }

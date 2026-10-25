@@ -253,7 +253,15 @@ void RendererVulkan::RenderToWindow(PresentWindow& window, const Layout::Framebu
 
         DrawScreens(frame, layout, flipped);
         scheduler.Flush(frame->render_ready);
+        const bool main_window = !isSecondaryWindow;
+        if (main_window && Settings::values.present_on_deadline) {
+            // The GPU finishes the frame while the limiter waits for its due time.
+            PaceFrame();
+        }
         window.Present(frame);
+        if (main_window) {
+            system.frame_limiter.MarkPresent(system.CoreTiming().GetGlobalTimeUs());
+        }
         if ((secondaryWindowEnabled && isSecondaryWindow) || (!secondaryWindowEnabled)) {
             Core::PerfStats::game_frames_updated = false;
             screenRendered = true;

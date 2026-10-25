@@ -9,6 +9,7 @@
 #include <codecvt>
 #include <thread>
 #include <dlfcn.h>
+#include <sys/system_properties.h>
 
 #include <android/api-level.h>
 #include <android/native_window_jni.h>
@@ -212,6 +213,16 @@ static void WaitForEmulationSurfaces(std::unique_lock<std::recursive_mutex>& sur
     surface_cv.wait(surface_lock, [] { return s_surface != nullptr; });
 }
 
+// Presenting on the frame's due time (RendererBase::PaceFrame) is on for streams. The property
+// debug.azahar.deadline (adb shell setprop) set to 1 or 0 forces it on or off for the next start.
+static void ApplyPresentOnDeadline() {
+    char value[PROP_VALUE_MAX] = {};
+    __system_property_get("debug.azahar.deadline", value);
+    const std::string_view v{value};
+    Settings::values.present_on_deadline = v == "1" || (v != "0" && Settings::values.stream_mode);
+    LOG_INFO(Frontend, "Present on deadline: {}", Settings::values.present_on_deadline);
+}
+
 // The stream frame is 800x960: the 3DS top screen 1:1 at 2x resolution in (0,0) and the bottom
 // one in (80,480), the layout the console expects. Applied over the ini without saving it.
 static void ApplyStreamOverrides() {
@@ -328,6 +339,7 @@ static Core::System::ResultStatus RunCitra(const std::string& filepath) {
 
     WaitForEmulationSurfaces(surface_lock);
     ApplyStreamOverrides();
+    ApplyPresentOnDeadline();
 
     // We also need to lock the surface mutex when System::Init() is called.
     // This is because save state saving and loading may call System::Init

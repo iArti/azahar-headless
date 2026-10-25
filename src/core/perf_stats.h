@@ -214,6 +214,12 @@ public:
      */
     void SetPacingHook(PacingHook hook);
 
+    /**
+     * Notes that the main window's frame was handed to the presentation engine (emulation
+     * thread, emulated time at the end of that frame), for the frame pacing log.
+     */
+    void MarkPresent(std::chrono::microseconds current_system_time_us);
+
 private:
     void WaitForFrameAdvance();
 

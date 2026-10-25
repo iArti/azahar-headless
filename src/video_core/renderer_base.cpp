@@ -40,14 +40,24 @@ void RendererBase::UpdateCurrentFramebufferLayout(bool is_portrait_mode) {
     }
 }
 
-void RendererBase::EndFrame() {
-    current_frame++;
+void RendererBase::PaceFrame() {
+    if (frame_paced) {
+        return;
+    }
+    frame_paced = true;
 
     system.perf_stats->EndSystemFrame();
 
     render_window.PollEvents();
 
     system.frame_limiter.DoFrameLimiting(system.CoreTiming().GetGlobalTimeUs());
+}
+
+void RendererBase::EndFrame() {
+    current_frame++;
+
+    PaceFrame();
+    frame_paced = false;
     system.perf_stats->BeginSystemFrame();
 }
 

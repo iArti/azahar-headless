@@ -73,6 +73,14 @@ public:
     /// Ends the current frame
     void EndFrame();
 
+    /**
+     * Ends the system frame and runs the frame limiter, once per frame. With
+     * Settings::values.present_on_deadline the renderer calls it right before presenting, so
+     * frames leave on the limiter's schedule however long they took; otherwise EndFrame calls it
+     * after presenting.
+     */
+    void PaceFrame();
+
     f32 GetCurrentFPS() const {
         return current_fps;
     }
@@ -113,6 +121,7 @@ protected:
 protected:
     f32 current_fps = 0.0f; /// Current framerate, should be set by the renderer
     u64 current_frame = 0;  /// Current frame, should be set by the renderer
+    bool frame_paced = false; /// PaceFrame already ran for the current frame
 };
 
 } // namespace VideoCore
